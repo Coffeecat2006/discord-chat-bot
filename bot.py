@@ -1,27 +1,51 @@
 import os
-import discord
-from discord import app_commands
 from dotenv import load_dotenv
+import discord
+from discord.ext import commands
+from discord import app_commands
+from google import genai
+from google.genai import types
 
-# 載入 .env 檔案中的環境變數
 load_dotenv()
-TOKEN = os.getenv("DISCORD_TOKEN")
+TOKEN = os.getenv('BOT_TOKEN')
+GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
+CHARACTER_CARD = os.getenv('CHARACTER_CARD')
 
-# 設定機器人權限
 intents = discord.Intents.default()
 intents.message_content = True
+bot = commands.Bot(command_prefix='/', intents=intents)
 
-# 建立 Client 實例
-client = discord.Client(intents=intents)
-tree = app_commands.CommandTree(client)
+client = genai.Client(api_key=GEMINI_API_KEY)
+config = types.GenerateContentConfig(system_instruction=CHARACTER_CARD)
 
-@client.event
+async def generate_response(user_input: str) -> str:
+    response = client.models.generate_content(
+        model="gemini-2.0-flash",
+        contents=user_input,
+        config=config
+    )
+    return response.text
+
+@bot.event
 async def on_ready():
-    await tree.sync()
-    print(f"✅ 已登入為 {client.user}，斜線指令已同步。")
+    await bot.tree.sync()
+    print(f'Logged in as {bot.user}')
 
-@tree.command(name="ping", description="回應 Pong!")       
-async def ping(interaction: discord.Interaction):
-    await interaction.response.send_message("🏓 Pong!")
+@bot.tree.command(name='chat', description='與機器人聊天')
+@app_commands.describe(message='與夜璃(Yeli)聊天')
+async def chat(interaction: discord.Interaction, message: str):
+    await interaction.response.defer()
+    reply = await generate_response(message)
+    await interaction.followup.send(reply)
 
-client.run(TOKEN)
+@bot.event
+async def on_message(message: discord.Message):
+    if message.author.bot:
+        return
+    if bot.user in message.mentions:
+        content = message.content.replace(f"<@{bot.user.id}>", "").strip()
+        reply = await generate_response(content)
+        await message.channel.send(reply)
+    await bot.process_commands(message)
+
+bot.run(TOKEN)
