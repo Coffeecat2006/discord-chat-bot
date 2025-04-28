@@ -42,10 +42,25 @@ async def chat(interaction: discord.Interaction, message: str):
 async def on_message(message: discord.Message):
     if message.author.bot:
         return
+    if message.reference and isinstance(message.reference, discord.MessageReference):
+        ref = message.reference
+        if ref.cached_message:
+            prev = ref.cached_message
+        else:
+            prev = await message.channel.fetch_message(ref.message_id)
+        prompt = (
+            f"前文：{prev.author.display_name}：{prev.content}\n"
+            f"使用者：{message.content.strip()}"
+        )
+        reply = await generate_response(prompt)
+        await message.channel.send(reply)
+        return
+
     if bot.user in message.mentions:
         content = message.content.replace(f"<@{bot.user.id}>", "").strip()
         reply = await generate_response(content)
         await message.channel.send(reply)
     await bot.process_commands(message)
+
 
 bot.run(TOKEN)
