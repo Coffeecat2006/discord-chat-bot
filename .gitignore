@@ -11,4 +11,4 @@ venv/
 .vscode/
 .idea/
 
-start.ps1
+start.bat
