@@ -1,0 +1,6 @@
+discord.py
+python-dotenv
+google-cloud-aiplatform
+openai-whisper
+requests
+discord-ext-voice-recv

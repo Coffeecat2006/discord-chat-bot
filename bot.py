@@ -70,13 +70,15 @@ async def on_message(message: discord.Message):
         return
     if message.reference and isinstance(message.reference, discord.MessageReference):
         prev = message.reference.cached_message or await message.channel.fetch_message(message.reference.message_id)
-        prompt = (
-            f"前文：{prev.author.display_name}：{prev.content}\n" +
-            f"使用者：{message.content.strip()}"
-        )
-        reply = await generate_response(prompt)
-        await message.channel.send(reply)
-        return
+        # 只有當被回覆的訊息是紗月(機器人)發送時才回覆
+        if prev.author.id == bot.user.id:
+            prompt = (
+                f"前文：{prev.author.display_name}：{prev.content}\n" +
+                f"使用者：{message.content.strip()}"
+            )
+            reply = await generate_response(prompt)
+            await message.channel.send(reply)
+            return
     if bot.user in message.mentions:
         content = message.content.replace(f"<@{bot.user.id}>", "").strip()
         reply = await generate_response(content)
