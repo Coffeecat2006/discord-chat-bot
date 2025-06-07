@@ -19,12 +19,16 @@ client = genai.Client(api_key=GEMINI_API_KEY)
 config = types.GenerateContentConfig(system_instruction=CHARACTER_CARD)
 
 async def generate_response(user_input: str) -> str:
-    response = client.models.generate_content(
-        model="gemini-2.0-flash",
-        contents=user_input,
-        config=config
-    )
-    return response.text
+    try:
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=user_input,
+            config=config
+        )
+        return response.text
+    except Exception as e:
+        print(f"Error generating response: {e}")
+        return "抱歉，我無法處理您的請求。請稍後再試。"
 
 @bot.event
 async def on_ready():
@@ -32,7 +36,7 @@ async def on_ready():
     print(f'Logged in as {bot.user}')
 
 @bot.tree.command(name='chat', description='與機器人聊天')
-@app_commands.describe(message='與夜璃(Yeli)聊天')
+@app_commands.describe(message='與紗月(Sayuki)聊天')
 async def chat(interaction: discord.Interaction, message: str):
     await interaction.response.defer()
     reply = await generate_response(message)
@@ -42,6 +46,13 @@ async def chat(interaction: discord.Interaction, message: str):
 async def on_message(message: discord.Message):
     if message.author.bot:
         return
+    
+    content = message.content.lower()
+    if '紗月' in content or 'sayuki' in content:
+        reply = await generate_response(message.content.strip())
+        await message.channel.send(reply)
+        return
+
     if message.reference and isinstance(message.reference, discord.MessageReference):
         ref = message.reference
         if ref.cached_message:
