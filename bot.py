@@ -5,11 +5,23 @@ import whisper
 import wave
 import audioop
 from collections import deque
+import threading
 
 from dotenv import load_dotenv
 import discord
 from discord.ext import commands
-from discord.ext import voice_recv  # 第三方擴充：discord-ext-voice-recv
+from discord.ext import voice_recv
+
+import discord.ext.voice_recv.opus as _vropus
+_orig_decode = _vropus.Decoder.decode
+def _safe_decode(self, data, fec=False):
+    try:
+        return _orig_decode(self, data, fec)
+    except Exception as e:
+        # 當補丁生效時，我們可以在這裡印出一個日誌，但暫時保持安靜
+        # logging.warning(f"Opus decode error caught by patch: {e}")
+        return b''
+_vropus.Decoder.decode = _safe_decode
 
 # Monkey-patch PacketDecryptor to support xchacha20_poly1305_rtpsize using xsalsa20 fallback
 import discord.ext.voice_recv.reader as _vr_reader
@@ -23,6 +35,7 @@ from google.genai import types
 import tempfile
 import requests
 import json
+import re
 
 load_dotenv()
 TOKEN = os.getenv('BOT_TOKEN')
@@ -70,7 +83,7 @@ async def on_message(message: discord.Message):
         return
     if message.reference and isinstance(message.reference, discord.MessageReference):
         prev = message.reference.cached_message or await message.channel.fetch_message(message.reference.message_id)
-        # 只有當被回覆的訊息是紗月(機器人)發送時才回覆
+        # 只有當被回覆的訊息是紗月發送時才回覆
         if prev.author.id == bot.user.id:
             prompt = (
                 f"前文：{prev.author.display_name}：{prev.content}\n" +
@@ -92,6 +105,7 @@ class VoiceState:
         self.audio_queue = deque(maxlen=5)
         self.whisper_model = None
         self.model_ready = asyncio.Event()
+        self.loop = asyncio.get_event_loop()
 
     # 載入 Whisper 模型
     async def initialize_whisper(self):
@@ -118,7 +132,7 @@ class VoiceState:
                 if pcm_bytes:
                     self.voice_state.audio_queue.append(pcm_bytes)
                     if len(self.voice_state.audio_queue) >= 5:
-                        asyncio.create_task(self.voice_state.process_audio())
+                        self.voice_state.loop.call_soon_threadsafe(self.voice_state.loop.create_task,self.voice_state.process_audio())
             def cleanup(self):
                 pass
 
@@ -131,7 +145,7 @@ class VoiceState:
 
     def recording_finished(self, error=None):
         print("錄音結束", error if error else "")
-
+    
     async def process_audio(self):
         if not self.audio_queue:
             return
@@ -145,11 +159,17 @@ class VoiceState:
         try:
             result = self.whisper_model.transcribe(temp_file.name)
             text = result.get("text", "").lower()
+            print(f"辨識結果：{text}")
             if '紗月' in text or 'sayuki' in text:
                 reply = await generate_response(text)
                 voice_temp = tempfile.NamedTemporaryFile(delete=False, suffix='.wav')
                 success = await text_to_speech(reply, voice_temp.name)
                 if success and self.voice_client:
+                    def _delayed_cleanup(path):
+                        try:
+                            os.remove(path)
+                        except Exception as exc:
+                            print(f"延遲刪除失敗：{exc}")
                     self.voice_client.play(
                         discord.FFmpegPCMAudio(
                             voice_temp.name,
@@ -157,12 +177,17 @@ class VoiceState:
                             before_options="-analyzeduration 0",
                             options="-vn -b:a 128k"
                         ),
-                        after=lambda e: os.remove(voice_temp.name) if e is None else print(f"播放錯誤：{e}")
+                        after=lambda e: threading.Timer(1.0, _delayed_cleanup, args=(voice_temp.name,)).start()
                     )
         except Exception as e:
             print(f"語音辨識錯誤：{e}")
         finally:
-            os.remove(temp_file.name)
+            def _del(path):
+                try:
+                    os.remove(path)
+                except Exception as e:
+                    print(f"延遲刪除失敗：{e}")
+            threading.Timer(5.0, _del, args=(temp_file.name,)).start()
             self.audio_queue.clear()
 
 voice_states: dict[int, VoiceState] = {}
@@ -233,20 +258,33 @@ def find_ffmpeg():
 
 if not find_ffmpeg():
     print("error: can't find FFmpeg. Please install FFmpeg and ensure it's in your PATH.")
+else:
+    ffdir = os.path.dirname(FFMPEG_PATH)
+    os.environ["PATH"] = ffdir + os.pathsep + os.environ.get("PATH", "")
 
 @bot.tree.command(name='speak', description='使用語音回應')
 async def speak(interaction: discord.Interaction, text: str):
-    if not FFMPEG_PATH:
-        return await interaction.response.send_message("找不到 FFmpeg，無法使用語音功能！")
     state = voice_states.get(interaction.guild.id)
     if not state or not state.voice_client:
         return await interaction.response.send_message("我必須先加入語音頻道！")
+    loop = state.loop
+    if not FFMPEG_PATH:
+        return await interaction.response.send_message("找不到 FFmpeg，無法使用語音功能！")
     await interaction.response.defer()
     try:
-        reply = await generate_response(text)
+        reply = await generate_response("$speak{ " + text + " }$")
+        jp_match = re.search(r'jp\{(.*?)\}', reply, re.DOTALL | re.IGNORECASE)
+        zh_match = re.search(r'zh-tw\{(.*?)\}', reply, re.DOTALL | re.IGNORECASE)
+        jp_reply = jp_match.group(1).strip() if jp_match else reply
+        zh_reply = zh_match.group(1).strip() if zh_match else ""
         temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.wav')
-        success = await text_to_speech(reply, temp_file.name)
+        success = await text_to_speech(jp_reply, temp_file.name)
         if success and state.voice_client:
+            def _delayed_cleanup(path):
+                try:
+                    os.remove(path)
+                except Exception as exc:
+                    print(f"延遲刪除失敗：{exc}")
             state.voice_client.play(
                 discord.FFmpegPCMAudio(
                     temp_file.name,
@@ -254,9 +292,9 @@ async def speak(interaction: discord.Interaction, text: str):
                     before_options="-analyzeduration 0",
                     options="-vn -b:a 128k"
                 ),
-                after=lambda e: os.remove(temp_file.name) if e is None else print(f"播放錯誤：{e}")
+                after=lambda e: threading.Timer(5.0, _delayed_cleanup, args=(temp_file.name,)).start()
             )
-            await interaction.followup.send(f"正在說話: {reply}")
+            await interaction.followup.send(f"正在說話: {zh_reply}")
         else:
             await interaction.followup.send("語音合成失敗，請稍後再試。")
     except Exception as e:
