@@ -1,6 +1,6 @@
 # discord-chat-bot
 
-一個基於 Discord.js 的聊天機器人。
+使用 Python 打造的 Discord 聊天機器人，具備語音錄製與文字生成等功能。
 
 ## 功能特色
 
@@ -10,9 +10,9 @@
 
 ## 安裝需求
 
-- Node.js 16.x 或更高版本
-- npm 或 yarn
-- Discord 開發者帳號
+- Python 3.8 或以上版本
+- pip
+- 安裝 `FFmpeg`、`VOICEVOX Engine` 以及系統套件 `libopus`
 
 ## 安裝步驟
 
@@ -24,16 +24,15 @@ cd discord-chat-bot
 
 2. 安裝相依套件
 ```bash
-npm install
+pip install -r setting/requirements.txt
 ```
 
 3. 設定環境變數
-- 複製 `.env.example` 到 `.env`
-- 填入您的 Discord Bot Token
+- 在專案根目錄建立 `.env` 並填入 `BOT_TOKEN`、`GEMINI_API_KEY` 及 `CHARACTER_CARD`
 
 4. 啟動機器人
 ```bash
-npm start
+python bot.py
 ```
 
 ## 使用方法
